@@ -3,204 +3,522 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>环评数据处理系统（纯前端版）</title>
-    <!-- Bootstrap 5 + ECharts -->
+    <title>华北电力大学 · 环评数据处理系统</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-    <!-- SheetJS 用于解析 Excel -->
+    <script src="https://cdn.jsdelivr.net/npm/highcharts@10.3.3/highcharts.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
     <style>
-        body { background: #f0f8ff; }
-        .card { border-radius: 1rem; margin-bottom: 2rem; }
-        .table-responsive { max-height: 400px; overflow-y: auto; }
-        .badge-exceed { background-color: #dc3545; }
-        .badge-pass { background-color: #198754; }
+        /* ========== 方案一：官方校园风光背景 ========== */
+        body {
+            background: #f0f8ff url('https://file-cdn.ncepu.edu.cn/_upload/tpl/00/0d/13/template13/images/bg.jpg') center center / cover no-repeat fixed;
+            background-attachment: fixed;
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        }
+
+        /* 卡片半透明毛玻璃效果，保证文字清晰 */
+        .card {
+            background-color: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(2px);
+            border: none;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+        }
+
+        .table-responsive { max-height: 500px; overflow-y: auto; }
+        .stat-card { border-left: 5px solid; transition: 0.2s; }
+        .stat-card:hover { transform: translateY(-3px); }
+        .category-air { background-color: #cfe2ff; color: #084298; }
+        .category-water { background-color: #cff4fc; color: #055160; }
+        .category-soil { background-color: #e2d9f3; color: #432874; }
+        .category-other { background-color: #f8d7da; color: #842029; }
+        .history-item { cursor: pointer; transition: 0.1s; border-left: 3px solid transparent; }
+        .history-item:hover { background-color: #e9ecef; border-left-color: #0d6efd; }
+        .history-sidebar {
+            position: fixed; right: 0; top: 0; width: 320px; height: 100vh;
+            background: white; box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            z-index: 1050; transition: transform 0.3s; transform: translateX(100%);
+            overflow-y: auto; padding: 1rem;
+        }
+        .history-sidebar.open { transform: translateX(0); }
+        .btn-history-toggle {
+            position: fixed; right: 20px; bottom: 20px; z-index: 1060;
+            border-radius: 50%; width: 56px; height: 56px; font-size: 24px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .trend-modal .modal-dialog { max-width: 90%; }
+        footer { text-align: center; margin-top: 2rem; color: #6c757d; }
     </style>
 </head>
 <body>
-<div class="container py-5">
-    <h1 class="text-center mb-4">📊 环评报告数据处理系统</h1>
+<div class="container py-5" style="max-width: 1400px;">
+    <h1 class="text-center mb-4">🏫 华北电力大学 · 环评报告数据处理系统</h1>
     <div class="card shadow">
         <div class="card-body">
-            <h5 class="card-title">1. 上传监测数据文件</h5>
-            <p class="text-muted">支持 .xlsx, .xls, .csv，文件需包含两列：<strong>pollutant</strong> (污染物名称) 和 <strong>value</strong> (监测值)</p>
-            <input type="file" id="fileInput" class="form-control" accept=".xlsx,.xls,.csv">
-            <button class="btn btn-primary mt-3" id="uploadBtn">开始处理</button>
+            <h5>📂 1. 上传监测数据文件</h5>
+            <p class="text-muted">支持 .xlsx, .xls, .csv，需包含 <strong>pollutant</strong> (污染物名称) 和 <strong>value</strong> (监测值) 列</p>
+            <div class="input-group">
+                <input type="file" id="fileInput" class="form-control" accept=".xlsx,.xls,.csv">
+                <button class="btn btn-primary" id="uploadBtn">开始处理</button>
+            </div>
         </div>
     </div>
 
+    <!-- 历史记录侧边栏 -->
+    <div id="historySidebar" class="history-sidebar">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5>📜 历史记录</h5>
+            <button class="btn-close" id="closeHistoryBtn"></button>
+        </div>
+        <div id="historyList">加载中...</div>
+        <button class="btn btn-outline-danger btn-sm w-100 mt-3" id="clearHistoryBtn">清空所有历史</button>
+    </div>
+    <button class="btn btn-primary btn-history-toggle" id="toggleHistoryBtn">📋</button>
+
+    <!-- 结果展示区域（初始隐藏） -->
     <div id="resultArea" style="display: none;">
-        <div class="card shadow">
+        <!-- 关键指标卡片 -->
+        <div class="row" id="summaryCards">
+            <div class="col-md-3 mb-3"><div class="card stat-card border-primary"><div class="card-body"><h6 class="text-primary">总检测项</h6><h2 id="totalItems" class="mb-0">0</h2></div></div></div>
+            <div class="col-md-3 mb-3"><div class="card stat-card border-danger"><div class="card-body"><h6 class="text-danger">超标项</h6><h2 id="exceedItems" class="mb-0">0</h2></div></div></div>
+            <div class="col-md-3 mb-3"><div class="card stat-card border-success"><div class="card-body"><h6 class="text-success">达标率</h6><h2 id="passRate" class="mb-0">0%</h2></div></div></div>
+            <div class="col-md-3 mb-3"><div class="card stat-card border-warning"><div class="card-body"><h6 class="text-warning">最大超标倍数</h6><h2 id="maxExceedRatio" class="mb-0">0x</h2></div></div></div>
+        </div>
+
+        <!-- 类别统计卡片 -->
+        <div class="card shadow mb-3"><div class="card-body"><h5>📂 按污染物类别统计</h5><div id="categoryStats" class="row"></div></div></div>
+
+        <!-- 超标排行 + 污染物统计表 -->
+        <div class="row">
+            <div class="col-md-4"><div class="card shadow"><div class="card-body"><h5>🏆 超标污染物 Top 5</h5><div id="rankList"><p class="text-muted">暂无</p></div></div></div></div>
+            <div class="col-md-8"><div class="card shadow"><div class="card-body"><h5>📊 污染物统计摘要</h5><div class="table-responsive"><table class="table table-sm table-bordered" id="statTable"><thead class="table-light"><tr><th>污染物</th><th>类别</th><th>次数</th><th>最小值</th><th>最大值</th><th>平均值</th><th>超标次数</th><th>超标率</th></tr></thead><tbody></tbody></table></div></div></div></div>
+        </div>
+
+        <!-- 图表 + 趋势分析按钮 -->
+        <div class="card shadow mt-3">
             <div class="card-body">
-                <h5>📈 分析结果</h5>
-                <div id="summaryPanel" class="alert alert-info"></div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5>📈 监测值与标准限值对比</h5>
+                    <button class="btn btn-sm btn-info" id="trendAnalysisBtn" data-bs-toggle="modal" data-bs-target="#trendModal">📊 趋势分析（历史记录）</button>
+                </div>
                 <div id="chart" style="height: 400px;"></div>
-                <hr>
-                <h6>详细数据</h6>
-                <div class="table-responsive">
-                    <table class="table table-bordered table-striped" id="resultTable">
-                        <thead class="table-dark">
-                            <tr><th>污染物</th><th>监测值</th><th>标准限值</th><th>标准来源</th><th>判定</th></tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
+            </div>
+        </div>
+
+        <!-- 详细数据表格（带类别筛选和导出） -->
+        <div class="card shadow mt-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap">
+                    <h5>📋 详细数据</h5>
+                    <div class="d-flex gap-2">
+                        <select id="categoryFilter" class="form-select w-auto"><option value="all">全部分类</option></select>
+                        <input type="text" id="searchInput" class="form-control" placeholder="搜索污染物...">
+                        <button class="btn btn-outline-secondary" id="exportBtn">📎 导出当前分类 Excel</button>
+                    </div>
+                </div>
+                <div class="table-responsive"><table class="table table-bordered table-striped" id="resultTable"><thead class="table-dark"><tr><th>污染物</th><th>类别</th><th>监测值</th><th>标准限值</th><th>标准来源</th><th>判定</th></tr></thead><tbody></tbody></table></div>
+            </div>
+        </div>
+    </div>
+    <footer>数据仅本地处理，历史记录存储于浏览器 | 华北电力大学 环境科学与工程学院 教学示例</footer>
+</div>
+
+<!-- 趋势分析模态框 -->
+<div class="modal fade trend-modal" id="trendModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">📈 历史趋势分析（选择污染物）</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <label>选择污染物：</label>
+                        <select id="trendPollutantSelect" class="form-select"></select>
+                        <label class="mt-2">选择历史记录（默认全部）：</label>
+                        <div id="trendRecordCheckboxes" style="max-height: 300px; overflow-y: auto; border:1px solid #ddd; padding: 8px; border-radius: 6px;"></div>
+                    </div>
+                    <div class="col-md-8"><div id="trendChart" style="height: 400px;"></div></div>
                 </div>
             </div>
+            <div class="modal-footer"><button type="button" class="btn btn-primary" id="drawTrendBtn">绘制趋势图</button><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button></div>
         </div>
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // ---------- 标准库（可随时扩展）----------
-    const STANDARDS = {
-        "SO2":   { limit: 0.5,  source: "《环境空气质量标准》GB 3095-2012 二级小时平均" },
-        "NOx":   { limit: 0.25, source: "《环境空气质量标准》GB 3095-2012 二级小时平均" },
-        "PM10":  { limit: 0.15, source: "《环境空气质量标准》GB 3095-2012 二级24小时平均" },
-        "PM2.5": { limit: 0.075,source: "《环境空气质量标准》GB 3095-2012 二级24小时平均" },
-        "COD":   { limit: 100,  source: "《污水综合排放标准》GB 8978-1996 一级标准" },
-        "NH3_N": { limit: 25,   source: "《污水综合排放标准》GB 8978-1996 一级标准" }
+    // ---------- 污染物分类映射 ----------
+    const CATEGORY_MAP = {
+        "SO2":"air","NOx":"air","PM10":"air","PM2.5":"air","CO":"air","O3":"air",
+        "COD":"water","NH3_N":"water","总磷":"water","总氮":"water","BOD5":"water",
+        "镉":"soil","铅":"soil","汞":"soil","砷":"soil"
     };
+    const CATEGORY_NAMES = {"air":"🌬️ 大气污染物","water":"💧 水污染物","soil":"⛰️ 土壤污染物","other":"📦 其他污染物"};
+    const CATEGORY_CLASS = {"air":"category-air","water":"category-water","soil":"category-soil","other":"category-other"};
+    const STANDARDS = {
+        "SO2":{limit:0.5,source:"《环境空气质量标准》GB 3095-2012 二级小时平均"},
+        "NOx":{limit:0.25,source:"《环境空气质量标准》GB 3095-2012 二级小时平均"},
+        "PM10":{limit:0.15,source:"《环境空气质量标准》GB 3095-2012 二级24小时平均"},
+        "PM2.5":{limit:0.075,source:"《环境空气质量标准》GB 3095-2012 二级24小时平均"},
+        "COD":{limit:100,source:"《污水综合排放标准》GB 8978-1996 一级标准"},
+        "NH3_N":{limit:25,source:"《污水综合排放标准》GB 8978-1996 一级标准"}
+    };
+    function getCategory(p) { return CATEGORY_MAP[p] || "other"; }
+    function getCategoryName(code) { return CATEGORY_NAMES[code] || code; }
 
-    // 解析文件（Excel / CSV）
-    function readFile(file) {
-        return new Promise((resolve, reject) => {
-            const ext = file.name.split('.').pop().toLowerCase();
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                if (ext === 'csv') {
-                    const text = e.target.result;
-                    const lines = text.split(/\r?\n/);
-                    const headers = lines[0].split(',').map(h => h.trim());
-                    const data = [];
-                    for (let i = 1; i < lines.length; i++) {
-                        if (lines[i].trim() === '') continue;
-                        const values = lines[i].split(',');
-                        let row = {};
-                        headers.forEach((h, idx) => { row[h] = values[idx] ? values[idx].trim() : ''; });
-                        data.push(row);
-                    }
-                    resolve(data);
-                } else {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
-                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const rows = XLSX.utils.sheet_to_json(firstSheet);
-                    resolve(rows);
-                }
-            };
-            reader.onerror = reject;
-            if (ext === 'csv') reader.readAsText(file);
-            else reader.readAsArrayBuffer(file);
+    // ---------- 历史存储 ----------
+    let currentDetails = [];
+    let currentResult = null;
+    const STORAGE_KEY = "EIA_HISTORY";
+    let historyRecords = [];
+
+    function loadHistory() {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        historyRecords = stored ? JSON.parse(stored) : [];
+        renderHistoryList();
+    }
+    function saveHistory() {
+        if(historyRecords.length > 30) historyRecords = historyRecords.slice(0,30);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(historyRecords));
+        renderHistoryList();
+    }
+    function addHistoryRecord(filename, result) {
+        const record = {
+            id: Date.now(),
+            timestamp: new Date().toISOString(),
+            filename: filename,
+            summary: result.summary,
+            details: result.details,
+            categoryAgg: result.categoryAgg,
+            statRows: result.statRows,
+            chart: result.chart
+        };
+        historyRecords.unshift(record);
+        saveHistory();
+    }
+    function renderHistoryList() {
+        const container = document.getElementById('historyList');
+        if(!container) return;
+        if(historyRecords.length===0) { container.innerHTML='<p class="text-muted">暂无历史记录</p>'; return; }
+        let html='';
+        historyRecords.forEach(rec=>{
+            const date = new Date(rec.timestamp).toLocaleString();
+            html+=`<div class="history-item p-2 mb-2 border rounded" data-id="${rec.id}">
+                        <div><strong>${rec.filename}</strong></div>
+                        <small>${date}</small><br>
+                        <small>总项:${rec.summary.total} 超标:${rec.summary.exceed} 达标率:${rec.summary.passRate}%</small>
+                   </div>`;
+        });
+        container.innerHTML=html;
+        document.querySelectorAll('.history-item').forEach(el=>{
+            el.addEventListener('click',()=>{
+                const id=parseInt(el.dataset.id);
+                const record=historyRecords.find(r=>r.id===id);
+                if(record) restoreResultFromRecord(record);
+                document.getElementById('historySidebar').classList.remove('open');
+            });
+        });
+    }
+    function restoreResultFromRecord(record) {
+        const result = {
+            summary: record.summary,
+            details: record.details,
+            categoryAgg: record.categoryAgg,
+            statRows: record.statRows,
+            chart: record.chart
+        };
+        currentResult = result;
+        currentDetails = result.details;
+        renderSummary(result.summary);
+        renderCategoryStats(result.categoryAgg);
+        renderRankList(computeTopExceeds(result.details));
+        renderStatTable(result.statRows);
+        renderDetailTable(result.details, document.getElementById('categoryFilter').value, document.getElementById('searchInput').value);
+        renderChart(result.chart.pollutants, result.chart.values, result.chart.standards);
+        updateCategoryFilter(result.details);
+        document.getElementById('resultArea').style.display = 'block';
+    }
+    function computeTopExceeds(details) {
+        return details.filter(r=>r.status==='超标' && r.exceedRatio>0)
+                      .sort((a,b)=>b.exceedRatio-a.exceedRatio).slice(0,5);
+    }
+    function updateCategoryFilter(details) {
+        const select = document.getElementById('categoryFilter');
+        const cats = [...new Set(details.map(d=>d.category))];
+        select.innerHTML='<option value="all">全部分类</option>';
+        cats.forEach(cat=>{
+            const opt=document.createElement('option');
+            opt.value=cat;
+            opt.textContent=getCategoryName(cat);
+            select.appendChild(opt);
         });
     }
 
-    // 处理数据并生成结果
-    function processData(rawData) {
-        // 自动识别列名（不区分大小写，允许 pollutant / value 多种写法）
+    // ---------- 数据处理核心 ----------
+    function processData(rawData, filename) {
         const firstRow = rawData[0];
-        let polKey = Object.keys(firstRow).find(k => k.toLowerCase() === 'pollutant');
-        let valKey = Object.keys(firstRow).find(k => k.toLowerCase() === 'value');
-        if (!polKey || !valKey) {
-            throw new Error('文件必须包含 "pollutant" 和 "value" 列（不区分大小写）');
-        }
-
-        const results = [];
-        for (const row of rawData) {
+        let polKey = Object.keys(firstRow).find(k=>k.toLowerCase()==='pollutant');
+        let valKey = Object.keys(firstRow).find(k=>k.toLowerCase()==='value');
+        if(!polKey || !valKey) throw new Error('文件中必须包含 "pollutant" 和 "value" 列');
+        const details=[];
+        const pollutantStats={};
+        const categoryAgg={ air:{total:0,exceed:0}, water:{total:0,exceed:0}, soil:{total:0,exceed:0}, other:{total:0,exceed:0} };
+        for(const row of rawData){
             let pol = String(row[polKey]).trim();
             let val = parseFloat(row[valKey]);
-            if (isNaN(val)) continue;
-
-            const stdInfo = STANDARDS[pol] || null;
-            let limit = stdInfo ? stdInfo.limit : null;
-            let source = stdInfo ? stdInfo.source : '无对应标准';
+            if(isNaN(val)) continue;
+            const cat = getCategory(pol);
+            const std = STANDARDS[pol] || null;
+            let limit = std ? std.limit : null;
+            let source = std ? std.source : '无对应标准';
             let status = '标准未定义';
-            if (stdInfo) {
-                status = val > limit ? '超标' : '达标';
+            let exceedRatio=0;
+            if(std){
+                status = val>limit ? '超标' : '达标';
+                if(val>limit) exceedRatio = (val/limit - 1).toFixed(2);
             }
-            results.push({
-                pollutant: pol,
-                value: val,
-                standard: limit,
-                source: source,
-                status: status
-            });
+            details.push({ pollutant:pol, category:cat, value:val, standard:limit, source:source, status:status, exceedRatio:parseFloat(exceedRatio) });
+            categoryAgg[cat].total++;
+            if(status==='超标') categoryAgg[cat].exceed++;
+            if(!pollutantStats[pol]) pollutantStats[pol] = { values:[], exceedCount:0, standardLimit:limit, source:source, category:cat };
+            pollutantStats[pol].values.push(val);
+            if(status==='超标') pollutantStats[pol].exceedCount++;
         }
-
-        if (results.length === 0) throw new Error('没有有效数据行');
-
-        // 统计
-        const total = results.length;
-        const exceed = results.filter(r => r.status === '超标').length;
-        const passRate = ((total - exceed) / total * 100).toFixed(2);
-
-        // 准备图表数据
-        const pollutants = results.map(r => r.pollutant);
-        const values = results.map(r => r.value);
-        const standards = results.map(r => r.standard !== null ? r.standard : 0);
-
-        return {
-            details: results,
-            summary: { total, exceed, passRate },
-            chart: { pollutants, values, standards }
+        if(details.length===0) throw new Error('没有有效数据行');
+        const total = details.length;
+        const exceed = details.filter(r=>r.status==='超标').length;
+        const passRate = ((total-exceed)/total*100).toFixed(2);
+        const maxExceedRatio = Math.max(...details.map(r=>r.exceedRatio),0);
+        const exceedList = details.filter(r=>r.status==='超标' && r.exceedRatio>0).sort((a,b)=>b.exceedRatio-a.exceedRatio).slice(0,5);
+        const statRows = Object.entries(pollutantStats).map(([pol,stat])=>{
+            const vals=stat.values;
+            return {
+                pollutant:pol, category:stat.category, count:vals.length,
+                min:Math.min(...vals).toFixed(3), max:Math.max(...vals).toFixed(3),
+                avg:(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3),
+                exceedCount:stat.exceedCount,
+                exceedRate:(stat.exceedCount/vals.length*100).toFixed(1)+'%'
+            };
+        });
+        const pollutants = details.map(r=>r.pollutant);
+        const values = details.map(r=>r.value);
+        const standards = details.map(r=>r.standard!==null?r.standard:0);
+        const result = {
+            summary:{total,exceed,passRate,maxExceedRatio:maxExceedRatio.toFixed(2)},
+            details, categoryAgg, statRows,
+            chart:{pollutants,values,standards},
+            topExceeds:exceedList
         };
+        return result;
     }
 
-    // 渲染界面
-    function renderResult(data) {
-        document.getElementById('resultArea').style.display = 'block';
-        // 汇总面板
-        const summaryHtml = `
-            <strong>✅ 总检测项：${data.summary.total}</strong><br>
-            ❌ 超标项：${data.summary.exceed}<br>
-            📉 达标率：${data.summary.passRate}%
-        `;
-        document.getElementById('summaryPanel').innerHTML = summaryHtml;
-
-        // 表格
-        const tbody = document.querySelector('#resultTable tbody');
-        tbody.innerHTML = '';
-        data.details.forEach(item => {
-            const row = tbody.insertRow();
-            row.classList.add(item.status === '超标' ? 'table-danger' : 'table-success');
-            row.insertCell(0).innerText = item.pollutant;
-            row.insertCell(1).innerText = item.value;
-            row.insertCell(2).innerText = item.standard !== null ? item.standard : '—';
-            row.insertCell(3).innerText = item.source;
-            row.insertCell(4).innerText = item.status;
+    // ---------- 渲染函数 ----------
+    function renderSummary(s){
+        document.getElementById('totalItems').innerText=s.total;
+        document.getElementById('exceedItems').innerText=s.exceed;
+        document.getElementById('passRate').innerText=s.passRate+'%';
+        document.getElementById('maxExceedRatio').innerText=s.maxExceedRatio+'x';
+    }
+    function renderCategoryStats(agg){
+        const cont=document.getElementById('categoryStats');
+        cont.innerHTML='';
+        for(const [cat,data] of Object.entries(agg)){
+            const rate=data.total===0?0:((data.total-data.exceed)/data.total*100).toFixed(1);
+            cont.innerHTML+=`<div class="col-md-3 mb-2"><div class="card bg-light"><div class="card-body p-3"><h6 class="${CATEGORY_CLASS[cat]} p-2 rounded">${getCategoryName(cat)}</h6><p class="mb-1">检测:${data.total}</p><p class="mb-1">超标:${data.exceed}</p><p class="mb-0">达标率:${rate}%</p></div></div></div>`;
+        }
+    }
+    function renderRankList(exceeds){
+        const div=document.getElementById('rankList');
+        if(!exceeds.length){ div.innerHTML='<p class="text-muted">暂无超标数据</p>'; return; }
+        let html='<ul class="list-unstyled">';
+        exceeds.forEach((item,idx)=>{
+            html+=`<li class="mb-2"><strong>${idx+1}. ${item.pollutant}</strong> — ${item.value} (标准${item.standard}) <span class="badge bg-danger">超标${item.exceedRatio}倍</span></li>`;
         });
-
-        // 图表
-        const chartDom = document.getElementById('chart');
-        const myChart = echarts.init(chartDom);
-        myChart.setOption({
-            tooltip: { trigger: 'axis' },
-            legend: { data: ['监测值', '标准限值'] },
-            xAxis: { type: 'category', data: data.chart.pollutants, axisLabel: { rotate: 30 } },
-            yAxis: { type: 'value', name: '浓度 / 排放值' },
-            series: [
-                { name: '监测值', type: 'bar', data: data.chart.values, itemStyle: { color: '#ff7c43' } },
-                { name: '标准限值', type: 'line', data: data.chart.standards, lineStyle: { color: 'red', width: 2 } }
-            ]
+        html+='</ul>';
+        div.innerHTML=html;
+    }
+    function renderStatTable(rows){
+        const tbody=document.querySelector('#statTable tbody');
+        tbody.innerHTML='';
+        rows.forEach(row=>{
+            const tr=tbody.insertRow();
+            tr.insertCell(0).innerText=row.pollutant;
+            const catCell=tr.insertCell(1);
+            catCell.innerText=getCategoryName(row.category);
+            catCell.className=CATEGORY_CLASS[row.category];
+            tr.insertCell(2).innerText=row.count;
+            tr.insertCell(3).innerText=row.min;
+            tr.insertCell(4).innerText=row.max;
+            tr.insertCell(5).innerText=row.avg;
+            tr.insertCell(6).innerText=row.exceedCount;
+            tr.insertCell(7).innerText=row.exceedRate;
+        });
+    }
+    function renderDetailTable(details, catFilter, keyword){
+        const tbody=document.querySelector('#resultTable tbody');
+        tbody.innerHTML='';
+        let filtered=details;
+        if(catFilter!=='all') filtered=filtered.filter(d=>d.category===catFilter);
+        if(keyword.trim()) filtered=filtered.filter(d=>d.pollutant.toLowerCase().includes(keyword.toLowerCase()));
+        filtered.forEach(item=>{
+            const row=tbody.insertRow();
+            row.classList.add(item.status==='超标'?'table-danger':'table-success');
+            row.insertCell(0).innerText=item.pollutant;
+            const catCell=row.insertCell(1);
+            catCell.innerText=getCategoryName(item.category);
+            catCell.className=CATEGORY_CLASS[item.category];
+            row.insertCell(2).innerText=item.value;
+            row.insertCell(3).innerText=item.standard!==null?item.standard:'—';
+            row.insertCell(4).innerText=item.source;
+            row.insertCell(5).innerText=item.status;
+        });
+    }
+    function renderChart(pollutants,values,standards){
+        if(typeof Highcharts==='undefined'){ document.getElementById('chart').innerHTML='<div class="alert alert-danger">图表库加载失败</div>'; return; }
+        Highcharts.chart('chart',{
+            title:{ text:'污染物监测值与标准限值对比' },
+            xAxis:{ categories:pollutants, labels:{ rotation:-30, style:{ fontSize:'11px' } } },
+            yAxis:{ title:{ text:'浓度/排放值' }, min:0 },
+            tooltip:{ shared:true },
+            legend:{ layout:'vertical', align:'right', verticalAlign:'top', floating:true },
+            series:[
+                { name:'监测值', type:'column', data:values, color:'#ff7c43' },
+                { name:'标准限值', type:'line', data:standards, color:'red', lineWidth:2 }
+            ],
+            credits:{ enabled:false }
         });
     }
 
-    // 主按钮事件
-    document.getElementById('uploadBtn').addEventListener('click', async () => {
-        const fileInput = document.getElementById('fileInput');
-        const file = fileInput.files[0];
-        if (!file) {
-            alert('请先选择一个文件');
+    // ---------- 导出功能（按当前分类，导出为 Excel .xlsx）----------
+    function exportCurrentCategoryExcel() {
+        if(!currentDetails || currentDetails.length===0){
+            alert('无数据可导出');
             return;
         }
-        try {
-            const rawData = await readFile(file);
-            const result = processData(rawData);
-            renderResult(result);
-        } catch (err) {
-            alert('处理出错：' + err.message);
-            console.error(err);
+        const selectedCategory = document.getElementById('categoryFilter').value;
+        let dataToExport = currentDetails;
+        let categoryNameForFile = '全部分类';
+        if(selectedCategory !== 'all'){
+            dataToExport = currentDetails.filter(d => d.category === selectedCategory);
+            categoryNameForFile = getCategoryName(selectedCategory);
         }
+        if(dataToExport.length === 0){
+            alert(`当前分类“${categoryNameForFile}”下没有数据`);
+            return;
+        }
+        const sheetData = [
+            ['污染物', '类别', '监测值', '标准限值', '标准来源', '判定']
+        ];
+        dataToExport.forEach(d => {
+            sheetData.push([
+                d.pollutant,
+                getCategoryName(d.category),
+                d.value,
+                d.standard !== null ? d.standard : '—',
+                d.source,
+                d.status
+            ]);
+        });
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(sheetData);
+        ws['!cols'] = [{wch:15},{wch:12},{wch:10},{wch:12},{wch:40},{wch:8}];
+        XLSX.utils.book_append_sheet(wb, ws, '环评数据');
+        XLSX.writeFile(wb, `环评数据_${categoryNameForFile}.xlsx`);
+    }
+
+    // ---------- 趋势分析 ----------
+    function refreshTrendModal(){
+        const select = document.getElementById('trendPollutantSelect');
+        const checkDiv = document.getElementById('trendRecordCheckboxes');
+        let allPollutants = new Set();
+        historyRecords.forEach(rec => { rec.details.forEach(d => allPollutants.add(d.pollutant)); });
+        select.innerHTML = '<option value="">请选择污染物</option>';
+        Array.from(allPollutants).sort().forEach(p => { select.innerHTML += `<option value="${p}">${p}</option>`; });
+        checkDiv.innerHTML = '';
+        historyRecords.forEach((rec, idx) => {
+            const date = new Date(rec.timestamp).toLocaleString();
+            checkDiv.innerHTML += `<div class="form-check"><input class="form-check-input trend-record-cb" type="checkbox" value="${rec.id}" id="cb_${rec.id}" ${idx===0?'checked':''}> <label class="form-check-label" for="cb_${rec.id}">${rec.filename} (${date})</label></div>`;
+        });
+    }
+    function drawTrendChart(){
+        const pollutant = document.getElementById('trendPollutantSelect').value;
+        if(!pollutant) { alert('请选择污染物'); return; }
+        const selectedIds = Array.from(document.querySelectorAll('.trend-record-cb:checked')).map(cb => parseInt(cb.value));
+        if(selectedIds.length===0) { alert('请至少选择一个历史记录'); return; }
+        const selectedRecords = historyRecords.filter(r => selectedIds.includes(r.id)).sort((a,b)=>a.timestamp.localeCompare(b.timestamp));
+        const dataPoints = [];
+        selectedRecords.forEach(rec => {
+            const item = rec.details.find(d => d.pollutant === pollutant);
+            if(item) {
+                dataPoints.push({ x: new Date(rec.timestamp).getTime(), y: item.value, status: item.status, standard: item.standard });
+            }
+        });
+        if(dataPoints.length===0) { alert('所选记录中未找到该污染物数据'); return; }
+        Highcharts.chart('trendChart', {
+            title: { text: `${pollutant} 浓度变化趋势` },
+            xAxis: { type: 'datetime', title: { text: '监测时间' } },
+            yAxis: { title: { text: '浓度值' }, plotLines: [{ value: dataPoints[0].standard, color: 'red', dashStyle: 'Dash', label: { text: '标准限值' } }] },
+            tooltip: { pointFormat: '<b>{point.y}</b><br/>状态: {point.status}' },
+            series: [{ name: pollutant, type: 'line', data: dataPoints.map(p => ({ x: p.x, y: p.y, status: p.status })), marker: { enabled: true } }],
+            credits: { enabled: false }
+        });
+    }
+
+    // ---------- 主按钮事件 ----------
+    document.getElementById('uploadBtn').addEventListener('click', async () => {
+        const file = document.getElementById('fileInput').files[0];
+        if(!file){ alert('请先选择文件'); return; }
+        try {
+            const raw = await new Promise((resolve,reject)=>{
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = reject;
+                if(file.name.endsWith('.csv')) reader.readAsText(file);
+                else reader.readAsArrayBuffer(file);
+            });
+            let data;
+            if(file.name.endsWith('.csv')){
+                const text = raw;
+                const lines = text.split(/\r?\n/);
+                const headers = lines[0].split(',').map(h=>h.trim());
+                const rows = [];
+                for(let i=1;i<lines.length;i++){
+                    if(lines[i].trim()==='') continue;
+                    const vals = lines[i].split(',');
+                    let obj={};
+                    headers.forEach((h,idx)=>obj[h]=vals[idx]?vals[idx].trim():'');
+                    rows.push(obj);
+                }
+                data=rows;
+            } else {
+                const wb = XLSX.read(new Uint8Array(raw), {type:'array'});
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                data = XLSX.utils.sheet_to_json(ws);
+            }
+            const result = processData(data, file.name);
+            currentResult = result;
+            currentDetails = result.details;
+            renderSummary(result.summary);
+            renderCategoryStats(result.categoryAgg);
+            renderRankList(result.topExceeds);
+            renderStatTable(result.statRows);
+            renderDetailTable(result.details, 'all', '');
+            renderChart(result.chart.pollutants, result.chart.values, result.chart.standards);
+            updateCategoryFilter(result.details);
+            document.getElementById('resultArea').style.display = 'block';
+            addHistoryRecord(file.name, result);
+            refreshTrendModal();
+        } catch(err) { alert('处理出错：'+err.message); }
     });
+
+    document.getElementById('exportBtn').addEventListener('click', exportCurrentCategoryExcel);
+    document.getElementById('categoryFilter').addEventListener('change', (e)=>{ if(currentDetails) renderDetailTable(currentDetails, e.target.value, document.getElementById('searchInput').value); });
+    document.getElementById('searchInput').addEventListener('input', (e)=>{ if(currentDetails) renderDetailTable(currentDetails, document.getElementById('categoryFilter').value, e.target.value); });
+    document.getElementById('toggleHistoryBtn').addEventListener('click', ()=>document.getElementById('historySidebar').classList.toggle('open'));
+    document.getElementById('closeHistoryBtn').addEventListener('click', ()=>document.getElementById('historySidebar').classList.remove('open'));
+    document.getElementById('clearHistoryBtn').addEventListener('click', ()=>{ if(confirm('清空所有历史记录？')){ historyRecords=[]; saveHistory(); renderHistoryList(); } });
+    document.getElementById('trendAnalysisBtn').addEventListener('click', ()=>{ refreshTrendModal(); });
+    document.getElementById('drawTrendBtn').addEventListener('click', drawTrendChart);
+
+    loadHistory();
+    refreshTrendModal();
 </script>
 </body>
 </html>
